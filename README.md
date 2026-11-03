@@ -2,6 +2,10 @@
 
 Security-first clipboard history for GNOME Shell. Popular clipboard managers keep your history as plain files on disk, including every password and token you ever copied. ClipSafe keeps text in memory only and refuses to store secrets in the first place.
 
+| Light | Dark |
+| --- | --- |
+| ![Clipboard menu in light mode, with masked entry and image thumbnail](screenshots/menu-light.png) | ![Clipboard menu in dark mode, with masked entry and image thumbnail](screenshots/menu-dark.png) |
+
 ## Security model
 
 - **Text never touches disk.** Text history lives only in GNOME Shell's memory and is gone on logout.
@@ -36,8 +40,12 @@ gnome-extensions enable clipsafe@harpi
 | | |
 | --- | --- |
 | Device | Lenovo ThinkPad E14 Gen 7 (21SX) |
+| CPU | Intel Core Ultra 7 255H (16 threads) |
+| GPU | Intel Graphics (Arrow Lake-P, integrated) |
+| RAM | 29.8 GiB usable |
 | OS | Ubuntu 26.04.1 LTS, kernel 7.0.0-42-generic |
 | Desktop | GNOME Shell 50.1, Wayland session |
+| Clipboard | Text and PNG images, Wayland session |
 
 ## License
 

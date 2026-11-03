@@ -1,0 +1,16 @@
+{
+  "uuid": "clipsafe@harpi",
+  "name": "ClipSafe",
+  "description": "Security-first clipboard history for text and images. Text is memory-only; images use a session-only 0600 disk cache wiped on logout. Honors password-manager secret hints, masks sensitive entries, with search, regex/app exclusion rules, auto-expire and a keyboard shortcut.",
+  "shell-version": [
+    "50"
+  ],
+  "settings-schema": "org.gnome.shell.extensions.clipsafe",
+  "gettext-domain": "clipsafe",
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "url": "https://github.com/piharpi/clipsafe",
+  "version-name": "1.0"
+}

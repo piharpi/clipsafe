@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.clipsafe"
+          path="/org/gnome/shell/extensions/clipsafe/">
+
+    <key name="history-size" type="i">
+      <default>30</default>
+      <range min="1" max="200"/>
+      <summary>Maximum number of clipboard entries kept in memory</summary>
+    </key>
+
+    <key name="paused" type="b">
+      <default>false</default>
+      <summary>Pause capturing new clipboard entries</summary>
+    </key>
+
+    <key name="skip-password-manager" type="b">
+      <default>true</default>
+      <summary>Never store entries flagged secret by password managers</summary>
+      <description>Honors the x-kde-passwordManagerHint used by Bitwarden, KeePassXC, 1Password, etc.</description>
+    </key>
+
+    <key name="conceal-sensitive" type="b">
+      <default>true</default>
+      <summary>Auto-mask entries that look like secrets</summary>
+      <description>Tokens, JWTs, API keys and private keys are stored masked and never previewed in plain text.</description>
+    </key>
+
+    <key name="clear-on-lock" type="b">
+      <default>false</default>
+      <summary>Wipe all history when the screen locks</summary>
+    </key>
+
+    <key name="max-entry-length" type="i">
+      <default>65536</default>
+      <range min="256" max="1048576"/>
+      <summary>Skip clipboard content larger than this many characters</summary>
+    </key>
+
+    <key name="capture-images" type="b">
+      <default>true</default>
+      <summary>Also capture images copied to the clipboard</summary>
+    </key>
+
+    <key name="max-image-mb" type="i">
+      <default>10</default>
+      <range min="1" max="100"/>
+      <summary>Skip images larger than this many megabytes</summary>
+    </key>
+
+    <key name="sensitive-ttl" type="i">
+      <default>0</default>
+      <range min="0" max="3600"/>
+      <summary>Seconds after which a masked/sensitive entry is auto-removed (0 = off)</summary>
+    </key>
+
+    <key name="idle-clear-minutes" type="i">
+      <default>0</default>
+      <range min="0" max="1440"/>
+      <summary>Wipe all history after this many minutes of inactivity (0 = off)</summary>
+    </key>
+
+    <key name="exclusion-patterns" type="as">
+      <default>[]</default>
+      <summary>Regular expressions; matching clipboard content is never stored</summary>
+    </key>
+
+    <key name="app-blocklist" type="as">
+      <default>[]</default>
+      <summary>WM_CLASS substrings; clipboard from a matching app is never stored</summary>
+    </key>
+
+    <key name="toggle-menu" type="as">
+      <default>['&lt;Super&gt;v']</default>
+      <summary>Keyboard shortcut to open the clipboard menu</summary>
+    </key>
+
+  </schema>
+</schemalist>

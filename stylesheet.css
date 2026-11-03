@@ -1,0 +1,27 @@
+.clipsafe-concealed {
+    font-family: monospace;
+    opacity: 0.75;
+}
+
+.clipsafe-icon-button {
+    padding: 0 6px;
+    border-radius: 6px;
+}
+
+.clipsafe-icon-button:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.clipsafe-search {
+    margin: 4px 8px;
+    min-width: 18em;
+}
+
+.clipsafe-scroll {
+    max-height: 24em;
+}
+
+.clipsafe-thumb {
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}

@@ -282,7 +282,6 @@ export default class ClipSafeExtension extends Extension {
         this._button = new ClipSafeButton(this);
         Main.panel.addToStatusArea('clipsafe', this._button);
 
-        this._clipboard = St.Clipboard.get_default();
         this._selection = global.display.get_selection();
         this._ownerChangedId = this._selection.connect(
             'owner-changed', (_sel, type, source) =>
@@ -323,7 +322,6 @@ export default class ClipSafeExtension extends Extension {
         Main.wm.removeKeybinding('toggle-menu');
 
         this._selection = null;
-        this._clipboard = null;
 
         this._button?.destroy();
         this._button = null;
@@ -444,7 +442,7 @@ export default class ClipSafeExtension extends Extension {
 
     _getMimetypes(source) {
         try {
-            return (source?.get_mimetypes?.() ?? []).map(m => m.toLowerCase());
+            return source?.get_mimetypes?.() ?? [];
         } catch {
             return [];
         }
@@ -465,30 +463,36 @@ export default class ClipSafeExtension extends Extension {
         if (this._isBlockedApp())
             return;
 
-        const hasText = mimes.some(m => m.startsWith('text/plain'));
-        if (hasText || mimes.length === 0) {
-            this._clipboard.get_text(St.ClipboardType.CLIPBOARD,
-                (_cb, text) => this._onText(text));
+        const textMime = this._pickTextMime(mimes);
+        if (textMime) {
+            // Up to 4 bytes per character in UTF-8, +1 to detect overflow.
+            const limit = this._settings.get_int('max-entry-length') * 4 + 1;
+            this._readSelection(textMime, limit)
+                .then(bytes => {
+                    if (bytes && bytes.get_size() < limit)
+                        this._onText(new TextDecoder().decode(bytes.toArray()));
+                })
+                .catch(e => logError(e, 'clipsafe: reading text failed'));
             return;
         }
 
         if (this._settings.get_boolean('capture-images')) {
             const mime = this._pickImageMime(mimes);
             if (mime) {
-                this._readSelection(mime)
+                this._readSelection(mime,
+                    this._settings.get_int('max-image-mb') * 1024 * 1024 + 1)
                     .then(bytes => this._onImage(mime, bytes))
                     .catch(e => logError(e, 'clipsafe: reading image failed'));
             }
         }
     }
 
-    /* Read clipboard bytes through Meta.Selection instead of
-     * St.Clipboard.get_content(): on GNOME 50 the latter drops one reference
-     * too many on the GBytes of in-shell sources (screenshots, our own
-     * paste-back), which later crashes the shell with a double free. */
-    _readSelection(mime) {
+    /* All clipboard access goes through Meta.Selection. St.Clipboard is not
+     * used: on GNOME 50 its get_content() drops one reference too many on
+     * the GBytes of in-shell sources (screenshots, our own paste-back),
+     * which later crashes the shell with a double free. */
+    _readSelection(mime, limit) {
         const selection = this._selection;
-        const limit = this._settings.get_int('max-image-mb') * 1024 * 1024 + 1;
         return new Promise(resolve => {
             const stream = Gio.MemoryOutputStream.new_resizable();
             selection.transfer_async(Meta.SelectionType.SELECTION_CLIPBOARD,
@@ -505,19 +509,29 @@ export default class ClipSafeExtension extends Extension {
     }
 
     _pickImageMime(mimes) {
-        if (mimes.includes('image/png'))
-            return 'image/png';
-        return mimes.find(m => m.startsWith('image/')) ?? null;
+        return mimes.find(m => m.toLowerCase() === 'image/png') ??
+            mimes.find(m => m.toLowerCase().startsWith('image/')) ?? null;
+    }
+
+    _pickTextMime(mimes) {
+        const lower = mimes.map(m => m.toLowerCase());
+        for (const want of ['text/plain;charset=utf-8', 'utf8_string', 'text/plain']) {
+            const i = lower.indexOf(want);
+            if (i !== -1)
+                return mimes[i];
+        }
+        const i = lower.findIndex(m => m.startsWith('text/plain'));
+        return i !== -1 ? mimes[i] : null;
+    }
+
+    _setClipboard(mime, bytes) {
+        const source = Meta.SelectionSourceMemory.new(mime, bytes);
+        this._selection?.set_owner(Meta.SelectionType.SELECTION_CLIPBOARD, source);
     }
 
     _hasSecretHint(mimes) {
-        for (const m of mimes) {
-            for (const hint of SECRET_MIME_HINTS) {
-                if (m.includes(hint))
-                    return true;
-            }
-        }
-        return false;
+        const hints = SECRET_MIME_HINTS.map(h => h.toLowerCase());
+        return mimes.some(m => hints.some(h => m.toLowerCase().includes(h)));
     }
 
     _isBlockedApp() {
@@ -727,14 +741,14 @@ export default class ClipSafeExtension extends Extension {
         if (entry.kind === 'image') {
             this._button?.menu.close();
             const bytes = await this._readImageFile(entry.filePath);
-            if (!bytes || !this._clipboard)
+            if (!bytes || !this._selection)
                 return;
             this._ignoreHash = entry.hash;
-            this._clipboard.set_content(
-                St.ClipboardType.CLIPBOARD, entry.mimetype, bytes);
+            this._setClipboard(entry.mimetype, bytes);
         } else {
             this._ignoreText = entry.text;
-            this._clipboard.set_text(St.ClipboardType.CLIPBOARD, entry.text);
+            this._setClipboard('text/plain;charset=utf-8',
+                GLib.Bytes.new(new TextEncoder().encode(entry.text)));
         }
         this._button?.menu.close();
     }

@@ -28,6 +28,8 @@ GNOME Shell 50.
 
 ## Install
 
+From [extensions.gnome.org](https://extensions.gnome.org/review/77674) (in review), or from source:
+
 ```bash
 git clone https://github.com/piharpi/clipsafe ~/.local/share/gnome-shell/extensions/clipsafe@harpi
 glib-compile-schemas ~/.local/share/gnome-shell/extensions/clipsafe@harpi/schemas

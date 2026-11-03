@@ -23,6 +23,12 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+Gio._promisify(Gio.File.prototype, 'replace_contents_bytes_async', 'replace_contents_finish');
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
+Gio._promisify(Gio.File.prototype, 'delete_async');
+Gio._promisify(Gio.File.prototype, 'enumerate_children_async');
+Gio._promisify(Gio.FileEnumerator.prototype, 'next_files_async');
+
 const PREVIEW_LEN = 48;
 const THUMB_MAX = 160;   // px, longest side of the in-menu thumbnail
 
@@ -105,7 +111,7 @@ class ClipSafeButton extends PanelMenu.Button {
         prefsItem.connect('activate', () => this._ext.openPreferences());
         this.menu.addMenuItem(prefsItem);
 
-        this.menu.connect('open-state-changed', (_m, open) => {
+        this._menuStateId = this.menu.connect('open-state-changed', (_m, open) => {
             if (open) {
                 this._searchEntry.set_text('');
                 global.stage.set_key_focus(this._searchEntry.clutter_text);
@@ -227,6 +233,14 @@ class ClipSafeButton extends PanelMenu.Button {
         item.add_child(del);
     }
 
+    destroy() {
+        if (this._menuStateId) {
+            this.menu.disconnect(this._menuStateId);
+            this._menuStateId = 0;
+        }
+        super.destroy();
+    }
+
     rebuild() {
         this._historySection.removeAll();
 
@@ -263,7 +277,7 @@ export default class ClipSafeExtension extends Extension {
         this._cacheDir = GLib.build_filenamev(
             [GLib.get_user_cache_dir(), 'clipsafe']);
         this._ensureCache();
-        this._wipeCache();
+        this._wipePromise = this._wipeCache();
 
         this._button = new ClipSafeButton(this);
         Main.panel.addToStatusArea('clipsafe', this._button);
@@ -288,6 +302,10 @@ export default class ClipSafeExtension extends Extension {
         this._setupIdleWatch();
     }
 
+    /* ClipSafe declares the `unlock-dialog` session mode so the clipboard
+     * history survives a screen lock instead of being wiped by disable().
+     * While locked, _onSessionUpdated() hides the indicator and capture is
+     * skipped; the history is wiped on lock only if `clear-on-lock` is set. */
     disable() {
         if (this._ownerChangedId) {
             this._selection.disconnect(this._ownerChangedId);
@@ -325,18 +343,20 @@ export default class ClipSafeExtension extends Extension {
         }
     }
 
-    _wipeCache() {
+    async _wipeCache() {
+        const dir = Gio.File.new_for_path(this._cacheDir);
         try {
-            const dir = Gio.File.new_for_path(this._cacheDir);
-            const en = dir.enumerate_children(
-                'standard::name', Gio.FileQueryInfoFlags.NONE, null);
-            let info;
-            while ((info = en.next_file(null)) !== null) {
-                try {
-                    dir.get_child(info.get_name()).delete(null);
-                } catch {}
+            const en = await dir.enumerate_children_async('standard::name',
+                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, GLib.PRIORITY_DEFAULT, null);
+            for (;;) {
+                const infos = await en.next_files_async(32, GLib.PRIORITY_DEFAULT, null);
+                if (infos.length === 0)
+                    break;
+                await Promise.all(infos.map(info =>
+                    dir.get_child(info.get_name())
+                        .delete_async(GLib.PRIORITY_DEFAULT, null)
+                        .catch(() => {})));
             }
-            en.close(null);
         } catch {
             // Directory missing: nothing to wipe.
         }
@@ -359,10 +379,10 @@ export default class ClipSafeExtension extends Extension {
             [this._cacheDir, `img-${hash}${this._extForMime(mime)}`]);
     }
 
-    _writeImageFile(path, bytes) {
+    async _writeImageFile(path, bytes) {
         try {
-            Gio.File.new_for_path(path).replace_contents(
-                bytes.get_data(), null, false,
+            await Gio.File.new_for_path(path).replace_contents_bytes_async(
+                bytes, null, false,
                 Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION,
                 null);
             return true;
@@ -371,19 +391,20 @@ export default class ClipSafeExtension extends Extension {
         }
     }
 
-    _readImageFile(path) {
+    async _readImageFile(path) {
         try {
-            const [ok, contents] = Gio.File.new_for_path(path).load_contents(null);
-            return ok ? GLib.Bytes.new(contents) : null;
+            const [contents] = await Gio.File.new_for_path(path)
+                .load_contents_async(null);
+            return GLib.Bytes.new(contents);
         } catch {
             return null;
         }
     }
 
     _deleteImageFile(path) {
-        try {
-            Gio.File.new_for_path(path).delete(null);
-        } catch {}
+        Gio.File.new_for_path(path)
+            .delete_async(GLib.PRIORITY_DEFAULT, null)
+            .catch(() => {});
     }
 
     _setupIdleWatch() {
@@ -454,10 +475,33 @@ export default class ClipSafeExtension extends Extension {
         if (this._settings.get_boolean('capture-images')) {
             const mime = this._pickImageMime(mimes);
             if (mime) {
-                this._clipboard.get_content(St.ClipboardType.CLIPBOARD, mime,
-                    (_cb, bytes) => this._onImage(mime, bytes));
+                this._readSelection(mime)
+                    .then(bytes => this._onImage(mime, bytes))
+                    .catch(e => logError(e, 'clipsafe: reading image failed'));
             }
         }
+    }
+
+    /* Read clipboard bytes through Meta.Selection instead of
+     * St.Clipboard.get_content(): on GNOME 50 the latter drops one reference
+     * too many on the GBytes of in-shell sources (screenshots, our own
+     * paste-back), which later crashes the shell with a double free. */
+    _readSelection(mime) {
+        const selection = this._selection;
+        const limit = this._settings.get_int('max-image-mb') * 1024 * 1024 + 1;
+        return new Promise(resolve => {
+            const stream = Gio.MemoryOutputStream.new_resizable();
+            selection.transfer_async(Meta.SelectionType.SELECTION_CLIPBOARD,
+                mime, limit, stream, null, (sel, res) => {
+                    try {
+                        sel.transfer_finish(res);
+                        stream.close(null);
+                        resolve(stream.steal_as_bytes());
+                    } catch {
+                        resolve(null);
+                    }
+                });
+        });
     }
 
     _pickImageMime(mimes) {
@@ -562,7 +606,7 @@ export default class ClipSafeExtension extends Extension {
         }
     }
 
-    _onImage(mime, bytes) {
+    async _onImage(mime, bytes) {
         if (!bytes || bytes.get_size() === 0)
             return;
         const capBytes = this._settings.get_int('max-image-mb') * 1024 * 1024;
@@ -602,8 +646,14 @@ export default class ClipSafeExtension extends Extension {
         // Write the full-resolution bytes to the on-disk cache; keep only the
         // small thumbnail and a path in memory so RAM stays light.
         const filePath = this._imagePath(hash, mime);
-        if (!this._writeImageFile(filePath, bytes))
+        await this._wipePromise;
+        if (!await this._writeImageFile(filePath, bytes))
             return;
+        if (!this._settings) {
+            // Disabled while writing: do not leave the file behind.
+            this._deleteImageFile(filePath);
+            return;
+        }
 
         this._pushEntry({
             kind: 'image',
@@ -673,10 +723,11 @@ export default class ClipSafeExtension extends Extension {
             this._deleteImageFile(entry.filePath);
     }
 
-    applyEntry(entry) {
+    async applyEntry(entry) {
         if (entry.kind === 'image') {
-            const bytes = this._readImageFile(entry.filePath);
-            if (!bytes)
+            this._button?.menu.close();
+            const bytes = await this._readImageFile(entry.filePath);
+            if (!bytes || !this._clipboard)
                 return;
             this._ignoreHash = entry.hash;
             this._clipboard.set_content(

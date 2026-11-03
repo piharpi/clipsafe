@@ -127,7 +127,7 @@ class ClipSafeButton extends PanelMenu.Button {
     }
 
     _maskFor(entry) {
-        const n = Math.min(Math.max(entry.length, 6), 12);
+        const n = Math.min(Math.max(entry.text.length, 6), 12);
         return '•'.repeat(n) + '  (hidden)';
     }
 
@@ -636,7 +636,9 @@ export default class ClipSafeExtension extends Extension {
                 ? Cogl.PixelFormat.RGBA_8888
                 : Cogl.PixelFormat.RGB_888;
             const content = St.ImageContent.new_with_preferred_size(tw, th);
-            content.set_bytes(scaled.read_pixel_bytes(), fmt,
+            // GNOME 50: set_bytes takes the CoglContext as first argument.
+            const ctx = global.stage.context.get_backend().get_cogl_context();
+            content.set_bytes(ctx, scaled.read_pixel_bytes(), fmt,
                 tw, th, scaled.get_rowstride());
             return {content, w: tw, h: th};
         } catch {
